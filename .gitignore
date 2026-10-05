@@ -1,0 +1,24 @@
+# Local datasets (NSL-KDD) — keep directory, ignore contents
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# ML artifacts (keep metrics via results/.gitkeep if needed)
+*.pt
+*.pth
+
+# IDE
+.idea/
+.vscode/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/

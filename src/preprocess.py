@@ -1,4 +1,7 @@
-"""NSL-KDD loading and preprocessing (fit on train only); client sharding is still a stub."""
+"""NSL-KDD loading and preprocessing (fit on train only).
+
+Client sharding (IID / non-IID) lives in src/sharding.py.
+"""
 
 from __future__ import annotations
  
@@ -172,27 +175,7 @@ def load_prepared_arrays(out_dir: str | Path) -> dict[str, np.ndarray]:
         return {k: f[k] for k in f.files}
 
 
-"""SHARDING"""
-
-def split_train_into_shards(
-    n_samples: int,
-    num_clients: int,
-    seed: int,
-) -> list[np.ndarray]:
-    """Return disjoint index arrays partitioning range(n_samples) among clients."""
-    if num_clients < 1:
-        raise ValueError("num_clients must be >= 1")
-    rng = np.random.default_rng(seed)
-    indices = rng.permutation(n_samples)
-    return np.array_split(indices, num_clients)
-
-
-def load_config_paths(shards_dir: Path) -> Tuple[Path, ...]:
-    """Placeholder for shard file layout used by clients."""
-    return tuple(shards_dir.glob("client_*.parquet"))
-
-
-"""CLI: python -m src.preprocess"""
+"""MAIN, CLI: python -m src.preprocess"""
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Preprocess NSL-KDD and save arrays.")

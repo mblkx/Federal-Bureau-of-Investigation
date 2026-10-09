@@ -151,13 +151,19 @@ class LocalModel:
 def run_local_baseline(
     client_id: int,
     config_path: str | Path = "src/config.yaml",
+    *,
+    override_shard_partition: str | None = None,
 ) -> dict[str, float]:
     """M2: train only on one shard, evaluate on the official global test set."""
     from src.preprocess import load_prepared_arrays
     from src.sharding import load_shard
 
     cfg = load_project_config(config_path)
+    if client_id < 0 or client_id >= cfg["num_clients"]:
+        raise ValueError(f"client_id must be between 0 and {cfg['num_clients'] - 1}")
     data_cfg = cfg["data"]
+    if override_shard_partition is not None:
+        data_cfg["shard_partition"] = override_shard_partition
     path = shard_path(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
     shard = load_shard(path)
     X_train, y_train = shard["X"], shard["y"]
@@ -177,8 +183,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Local baseline training on one FL shard (M2).")
     ap.add_argument("--cid", type=int, required=True, help="Client id 0..num_clients-1")
     ap.add_argument("--config", default="src/config.yaml")
+    ap.add_argument("--shard_partition", default=None, help="Override config.data.shard_partition")
     args = ap.parse_args()
-    run_local_baseline(args.cid, args.config)
+    run_local_baseline(args.cid, args.config, override_shard_partition=args.shard_partition)
 
 
 if __name__ == "__main__":

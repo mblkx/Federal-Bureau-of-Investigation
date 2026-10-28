@@ -1,5 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
+addopts = ["-m", "not integration"]
 markers = [
     "integration: full federated learning loop (slow)",
 ]

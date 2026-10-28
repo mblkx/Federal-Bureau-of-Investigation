@@ -111,14 +111,23 @@ class LocalModel:
         self.model.load_state_dict(state, strict=True)
 
     def train_on(self, X: np.ndarray, y: np.ndarray) -> int:
-        """Run local_epochs SGD on the shard; return number of training examples."""
+        """Trenuje MLP na lokalnym shardzie przez ``local_epochs`` epok SGD.
+
+        Kroki:
+        1. Ustaw seed i zbuduj ``DataLoader`` z deterministycznym tasowaniem batchy.
+        2. Dla każdej epoki: pętla po batchach, forward, loss, backward, krok Adam.
+        3. Zwróć ``len(y)`` — Flower traktuje to jako ``num_examples`` w weighted FedAvg.
+        """
         set_seed(self.settings.random_seed)
         X_t = torch.as_tensor(X, dtype=torch.float32, device=self.device)
         y_t = torch.as_tensor(y, dtype=torch.long, device=self.device)
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(self.settings.random_seed)
         loader = DataLoader(
             TensorDataset(X_t, y_t),
             batch_size=self.settings.batch_size,
             shuffle=True,
+            generator=generator,
         )
         self.model.train()
         for _ in range(self.settings.local_epochs):
@@ -129,6 +138,20 @@ class LocalModel:
                 loss.backward()
                 self.optimizer.step()
         return int(len(y))
+
+    def predict_attack_proba(self, X: np.ndarray) -> np.ndarray:
+        """Zwraca prawdopodobieństwo klasy „atak” (indeks 1) dla każdego wiersza.
+
+        Kroki:
+        1. Przełącz model w tryb eval i przenieś ``X`` na tensory na ``self.device``.
+        2. Policz softmax na logitach i wybierz kolumnę klasy ataku.
+        3. Zwróć wektor P(atak) jako ``numpy`` (wejście do ``evaluate.evaluate``).
+        """
+        self.model.eval()
+        X_t = torch.as_tensor(X, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            probs = torch.softmax(self.model(X_t), dim=1)[:, 1]
+        return probs.cpu().numpy()
 
     def evaluate(self, X: np.ndarray, y: np.ndarray) -> tuple[float, dict[str, float]]:
         """Return (mean cross-entropy loss, sklearn metrics) on a fixed hold-out set."""

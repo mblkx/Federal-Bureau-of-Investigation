@@ -76,7 +76,7 @@ def test_report_and_save(tmp_path):
 
 
 #Validation
-OUNTS = {"normal": 600, "DoS": 300, "Probe": 80, "R2L": 20, "U2R": 5}
+COUNTS = {"normal": 600, "DoS": 300, "Probe": 80, "R2L": 20, "U2R": 5}
  
  
 @pytest.fixture()

@@ -1,7 +1,9 @@
-"""Flower client wrapper tests (no live server)."""
+"""``NSLKDDClient.fit`` i asercje privacy (bez serwera)."""
 
 import numpy as np
+import pytest
 
+from src.privacy import assert_fit_payload_is_model_only
 from src.training import LocalModel, TrainingSettings
 from src.client import NSLKDDClient
 
@@ -27,11 +29,20 @@ def test_fit_returns_shard_size_not_raw_features():
     params = client.get_parameters({})
     out_params, num_examples, metrics = client.fit(params, {})
     assert num_examples == len(client.y_train)
-    assert len(out_params) == len(params)
-    # Payload is weight tensors only — not feature dimension batches.
-    assert all(p.ndim >= 1 for p in out_params)
-    assert not any(p.shape == client.X_train.shape for p in out_params)
     assert metrics == {}
+    assert_fit_payload_is_model_only(
+        out_params,
+        params,
+        forbidden_feature_shape=tuple(client.X_train.shape),
+    )
+
+
+def test_assert_fit_payload_rejects_feature_matrix_shape():
+    client = _client()
+    params = client.get_parameters({})
+    leaked = [client.X_train.astype(np.float32)]
+    with pytest.raises(ValueError, match="expected"):
+        assert_fit_payload_is_model_only(leaked, params)
 
 
 def test_evaluate_returns_loss_and_metrics():

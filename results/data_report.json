@@ -1,0 +1,68 @@
+{
+  "train": {
+    "rows": 125973,
+    "columns": 45,
+    "attack_share": 0.4654,
+    "categories": {
+      "normal": 67343,
+      "DoS": 45927,
+      "Probe": 11656,
+      "R2L": 995,
+      "U2R": 52
+    },
+    "missing": {},
+    "constant_columns": [
+      "num_outbound_cmds"
+    ],
+    "duplicates": {
+      "exact_duplicates": 0,
+      "label_conflict_groups": 15,
+      "label_conflict_rows": 31,
+      "mixed_normal_attack_groups": 7,
+      "mixed_normal_attack_rows": 14,
+      "mixed_attack_names": [
+        "land",
+        "pod",
+        "rootkit",
+        "satan"
+      ]
+    }
+  },
+  "test": {
+    "rows": 22544,
+    "columns": 45,
+    "attack_share": 0.5692,
+    "categories": {
+      "normal": 9711,
+      "DoS": 7460,
+      "R2L": 2885,
+      "Probe": 2421,
+      "U2R": 67
+    },
+    "missing": {},
+    "constant_columns": [
+      "num_outbound_cmds"
+    ],
+    "duplicates": {
+      "exact_duplicates": 0,
+      "label_conflict_groups": 57,
+      "label_conflict_rows": 114,
+      "mixed_normal_attack_groups": 54,
+      "mixed_normal_attack_rows": 108,
+      "mixed_attack_names": [
+        "snmpgetattack"
+      ]
+    }
+  },
+  "categorical_cardinality": {
+    "protocol_type": 3,
+    "service": 70,
+    "flag": 11
+  },
+  "train_test_overlap": {
+    "rows": 610,
+    "share_of_test": 0.0271,
+    "rows_same_features": 664
+  },
+  "unseen_categories_in_test": {}
+}

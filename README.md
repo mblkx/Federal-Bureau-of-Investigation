@@ -1,6 +1,6 @@
 # Federal-Bureau-of-Investigation
 
-Projekt z Zaawansowanych Technik Kryptografii i Kryptoanalizy — rozproszona detekcja anomalii (FedAvg) na NSL-KDD.
+Projekt z Zaawansowanych Technik Kryptografii i Kryptoanalizy oraz Metod Sztucznej Inteligencji w Cyberbezpieczeństwie — rozproszona detekcja anomalii (FedAvg) na NSL-KDD.
 
 Plan realizacji: [docs/PLAN_REALIZACJI.md](docs/PLAN_REALIZACJI.md).
 
@@ -14,6 +14,8 @@ Licencja NSL-KDD wprost pozwala na mirrorowanie. W projekcie wykorzystano mirror
 **Sharding (M1)** — Zbiór treningowy dzielony jest na 3 rozłączne shardy (IID, Dirichlet lub według kategorii ataku), tak aby każdy klient miał ruch normalny i ataki.
 
 **Kontrola danych (M1)** — `python -m src.data_checks` zapisuje raport jakości `results/data_report.json` (liczba rekordów i kolumn, braki, duplikaty, cechy stałe, rekordy testu obecne w treningu), a `python -m src.eda` wykresy do `results/eda/`. Sumy SHA-256 plików danych są w `docs/data_checksums.json` (`python -m src.data_checks --verify` sprawdza zgodność z mirrorem). Wynik: brak braków i duplikatów dokładnych, jedna cecha stała (`num_outbound_cmds`), 610 rekordów testu (2,7%) występuje także w treningu.
+
+**Ekstrakcja cech (M1)** — Metoda obróbki nr 2 (`src/features.py`): usunięcie cech stałych i skorelowanych (|r| > 0,95), a następnie PCA (95% wariancji) lub selekcja cech. Z 122 cech zostaje 24 wymiary; `input_dim` nie jest wpisywany ręcznie, tylko czytany z `meta.json` obok danych (`src/data_config.py`). Porównanie z pełnym zestawem na zbiorze walidacyjnym: `results/feature_extraction.json`. Jedno polecenie `python -m src.build_data` generuje dane po obu metodach (`full`, `extracted`) i shardy IID, Dirichlet oraz według kategorii.
 
 **Ewaluacja** — Moduł `src/evaluate.py` liczy F1, precision, recall, accuracy, ROC-AUC, macierz pomyłek i skuteczność wykrycia per kategoria. Protokół: [docs/evaluation_protocol.md](docs/evaluation_protocol.md) (`KDDTest+` tylko do końcowego pomiaru F1 > 0,89).
 

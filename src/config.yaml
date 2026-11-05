@@ -8,10 +8,12 @@ data:
   test_path: data/KDDTest+.txt
   processed_dir: data/processed
   shards_dir: data/shards
-  shard_partition: iid  # subdir under shards_dir (iid, category, dirichlet_a0.5, ...)
+  shard_partition: iid  # subdir under shards_dir/<preprocessing> (iid, category, dirichlet_a0.5, ...)
+  preprocessing: full  # full (method no. 1, all features) | extracted (method no. 2)
+  dirichlet_alpha: 0.5
 
 model:
-  input_dim: 122
+  input_dim: null  # auto: read from data/processed/<preprocessing>/meta.json
   hidden_dims: [128, 64]
   num_classes: 2  # binary normal vs attack (map multi-class in preprocess)
 
@@ -19,6 +21,12 @@ training:
   local_epochs: 1
   batch_size: 256
   learning_rate: 0.001
+
+features:  # preprocessing method no. 2 (feature extraction), see src/features.py
+  method: pca  # filter | select | pca
+  corr_threshold: 0.95
+  k: 40  # select only
+  n_components: 0.95  # pca only (variance share)
 
 federated:
   num_rounds: 5

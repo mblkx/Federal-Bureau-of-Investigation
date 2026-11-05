@@ -1,0 +1,70 @@
+{
+  "config": {},
+  "extractor": {
+    "method": "pca",
+    "input_dim": 122,
+    "output_dim": 24,
+    "constant_dropped": [
+      "num_outbound_cmds"
+    ],
+    "correlated_dropped": {
+      "num_compromised": {
+        "kept": "num_root",
+        "r": 0.9988
+      },
+      "srv_serror_rate": {
+        "kept": "dst_host_srv_serror_rate",
+        "r": 0.9863
+      },
+      "rerror_rate": {
+        "kept": "srv_rerror_rate",
+        "r": 0.989
+      },
+      "dst_host_serror_rate": {
+        "kept": "dst_host_srv_serror_rate",
+        "r": 0.9851
+      },
+      "flag_S0": {
+        "kept": "dst_host_srv_serror_rate",
+        "r": 0.9812
+      },
+      "serror_rate": {
+        "kept": "dst_host_srv_serror_rate",
+        "r": 0.9811
+      },
+      "dst_host_srv_rerror_rate": {
+        "kept": "srv_rerror_rate",
+        "r": 0.9702
+      }
+    },
+    "after_filter": 114,
+    "corr_threshold": 0.95,
+    "explained_variance": 0.9592
+  },
+  "validation_comparison": {
+    "full": {
+      "input_dim": 122,
+      "f1": 0.9983,
+      "roc_auc": 0.9998,
+      "accuracy": 0.9985
+    },
+    "filter": {
+      "input_dim": 113,
+      "f1": 0.9981,
+      "roc_auc": 0.9999,
+      "accuracy": 0.9982
+    },
+    "select": {
+      "input_dim": 40,
+      "f1": 0.9962,
+      "roc_auc": 0.9998,
+      "accuracy": 0.9965
+    },
+    "pca": {
+      "input_dim": 23,
+      "f1": 0.9967,
+      "roc_auc": 0.9999,
+      "accuracy": 0.9969
+    }
+  }
+}

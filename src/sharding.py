@@ -196,9 +196,14 @@ def save_shards(
     out.mkdir(parents=True, exist_ok=True)
     categories = np.asarray(categories)
     for k, idx in enumerate(shards):
+        # Fixed-width unicode avoids object arrays (np.load allow_pickle=False).
+        cat_k = np.asarray(categories[idx], dtype="U32")
         np.savez_compressed(
             out / f"client_{k}.npz",
-            X=X[idx], y=y[idx], cat=categories[idx], indices=idx,
+            X=X[idx],
+            y=y[idx],
+            cat=cat_k,
+            indices=idx,
         )
     stats = partition_stats(categories, shards)
     stats.to_csv(out / "stats.csv")
@@ -206,8 +211,12 @@ def save_shards(
  
  
 def load_shard(path: str | Path) -> Dict[str, np.ndarray]:
-    with np.load(path) as f:
-        return {k: f[k] for k in f.files}
+    # allow_pickle for older shards that stored ``cat`` as object dtype.
+    with np.load(path, allow_pickle=True) as f:
+        data = {k: f[k] for k in f.files}
+    if "cat" in data:
+        data["cat"] = np.asarray(data["cat"], dtype="U32")
+    return data
 
 
 """MAIN"""

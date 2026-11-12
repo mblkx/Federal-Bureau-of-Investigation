@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import random
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -12,11 +13,17 @@ from typing import Any, Sequence
 import numpy as np
 import torch
 import yaml
-from sklearn.metrics import f1_score, precision_score, recall_score
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.data_config import resolve_data_config
+from src.evaluate import evaluate as score_predictions
+from src.evaluate import format_report, stratified_holdout
 from src.model import MLPClassifier
+
+# Local holdout share (plan M2.1 / evaluation_protocol.md): train on 80%, validate on 20%.
+VAL_FRACTION = 0.2
+ATTACK_SCORE_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
@@ -28,7 +35,9 @@ class TrainingSettings:
 
 
 def load_project_config(path: str | Path) -> dict[str, Any]:
-    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    """Load YAML and resolve preprocessing paths / ``model.input_dim`` from data."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    return resolve_data_config(raw)
 
 
 def set_seed(seed: int) -> None:
@@ -58,6 +67,42 @@ def ndarrays_to_state_dict(
     return OrderedDict(
         (key, torch.tensor(array)) for key, array in zip(keys, ndarrays, strict=True)
     )
+
+
+def split_shard_holdout(
+    X: np.ndarray,
+    y: np.ndarray,
+    categories: np.ndarray,
+    seed: int,
+    *,
+    val_fraction: float = VAL_FRACTION,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split one client shard into local train / validation (stratified by category)."""
+    train_idx, val_idx = stratified_holdout(categories, val_fraction, seed)
+    return (
+        X[train_idx],
+        y[train_idx],
+        categories[train_idx],
+        X[val_idx],
+        y[val_idx],
+        categories[val_idx],
+    )
+
+
+def scalar_metrics(result: dict[str, object]) -> dict[str, float]:
+    """Flatten ``evaluate.evaluate`` output to floats suitable for Flower aggregation."""
+    out: dict[str, float] = {}
+    for key, value in result.items():
+        if key == "by_category":
+            continue
+        if isinstance(value, (bool, np.bool_)):
+            continue
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            number = float(value)
+            if math.isnan(number):
+                continue
+            out[key] = number
+    return out
 
 
 class LocalModel:
@@ -92,7 +137,12 @@ class LocalModel:
             learning_rate=float(train_cfg["learning_rate"]),
             random_seed=int(cfg["random_seed"]),
         )
-        input_dim = int(model_cfg["input_dim"])
+        raw_dim = model_cfg.get("input_dim")
+        if raw_dim is None:
+            raise ValueError(
+                "model.input_dim is unset; run preprocess/build_data or set it in config"
+            )
+        input_dim = int(raw_dim)
         if input_dim <= 0:
             raise ValueError("model.input_dim must be set in config (run preprocess first)")
         return cls(
@@ -111,7 +161,7 @@ class LocalModel:
         self.model.load_state_dict(state, strict=True)
 
     def train_on(self, X: np.ndarray, y: np.ndarray) -> int:
-        """Trenuje MLP na lokalnym shardzie przez ``local_epochs`` epok SGD.
+        """Trenuje MLP na lokalnym zbiorze treningowym przez ``local_epochs`` epok SGD.
 
         Kroki:
         1. Ustaw seed i zbuduj ``DataLoader`` z deterministycznym tasowaniem batchy.
@@ -153,22 +203,36 @@ class LocalModel:
             probs = torch.softmax(self.model(X_t), dim=1)[:, 1]
         return probs.cpu().numpy()
 
-    def evaluate(self, X: np.ndarray, y: np.ndarray) -> tuple[float, dict[str, float]]:
-        """Return (mean cross-entropy loss, sklearn metrics) on a fixed hold-out set."""
+    def evaluate(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        categories: np.ndarray | None = None,
+        *,
+        threshold: float = ATTACK_SCORE_THRESHOLD,
+    ) -> tuple[float, dict[str, float]]:
+        """Score a hold-out set: CE loss plus ``evaluate.evaluate`` metrics (τ = 0.5)."""
         self.model.eval()
         X_t = torch.as_tensor(X, dtype=torch.float32, device=self.device)
         y_t = torch.as_tensor(y, dtype=torch.long, device=self.device)
         with torch.no_grad():
             logits = self.model(X_t)
             loss = float(self.criterion(logits, y_t).item())
-            preds = logits.argmax(dim=1).cpu().numpy()
-        metrics = {
-            "f1": float(f1_score(y, preds, zero_division=0)),
-            "precision": float(precision_score(y, preds, zero_division=0)),
-            "recall": float(recall_score(y, preds, zero_division=0)),
-            "accuracy": float((preds == y).mean()),
-        }
-        return loss, metrics
+            scores = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+        result = score_predictions(y, scores, categories, threshold=threshold)
+        return loss, scalar_metrics(result)
+
+    def evaluate_full(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        categories: np.ndarray | None = None,
+        *,
+        threshold: float = ATTACK_SCORE_THRESHOLD,
+    ) -> dict[str, object]:
+        """Full ``evaluate.evaluate`` dict (incl. ``by_category``) for local reporting."""
+        scores = self.predict_attack_proba(X)
+        return score_predictions(y, scores, categories, threshold=threshold)
 
 
 def run_local_baseline(
@@ -176,9 +240,11 @@ def run_local_baseline(
     config_path: str | Path = "src/config.yaml",
     *,
     override_shard_partition: str | None = None,
-) -> dict[str, float]:
-    """M2: train only on one shard, evaluate on the official global test set."""
-    from src.preprocess import load_prepared_arrays
+) -> dict[str, object]:
+    """M2.1: train on 80% of one shard, evaluate on the local 20% validation split.
+
+    Does not load ``KDDTest+`` (reserved for server-side / final reporting).
+    """
     from src.sharding import load_shard
 
     cfg = load_project_config(config_path)
@@ -188,22 +254,32 @@ def run_local_baseline(
     if override_shard_partition is not None:
         data_cfg["shard_partition"] = override_shard_partition
     path = shard_path(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
+    print(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
     shard = load_shard(path)
-    X_train, y_train = shard["X"], shard["y"]
+    if "cat" not in shard:
+        raise KeyError(f"shard {path} lacks 'cat'; re-run sharding / build_data")
 
-    processed = load_prepared_arrays(data_cfg["processed_dir"])
-    X_test, y_test = processed["X_test"], processed["y_test"]
+    X_tr, y_tr, _cat_tr, X_va, y_va, cat_va = split_shard_holdout(
+        shard["X"],
+        shard["y"],
+        shard["cat"],
+        int(cfg["random_seed"]),
+    )
 
     local = LocalModel.from_config(cfg)
-    n = local.train_on(X_train, y_train)
-    loss, metrics = local.evaluate(X_test, y_test)
+    n = local.train_on(X_tr, y_tr)
+    loss, metrics = local.evaluate(X_va, y_va, cat_va)
+    full = local.evaluate_full(X_va, y_va, cat_va)
     print(f"client_{client_id}: trained on {n} samples from {path}")
-    print(f"global test loss={loss:.4f}  F1={metrics['f1']:.4f}  acc={metrics['accuracy']:.4f}")
-    return metrics
+    print(f"local validation loss={loss:.4f}  n_val={len(y_va)}")
+    print(format_report(full, title=f"client_{client_id} local validation"))
+    return {**full, "loss": loss, "n_train": n, "n_val": int(len(y_va)), **metrics}
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Local baseline training on one FL shard (M2).")
+    ap = argparse.ArgumentParser(
+        description="Local baseline: train on 80% of one shard, validate on 20% (M2.1)."
+    )
     ap.add_argument("--cid", type=int, required=True, help="Client id 0..num_clients-1")
     ap.add_argument("--config", default="src/config.yaml")
     ap.add_argument("--shard_partition", default=None, help="Override config.data.shard_partition")

@@ -1,8 +1,21 @@
 """Unit tests for local training (no NSL-KDD download)."""
 
-import numpy as np
+from pathlib import Path
 
-from src.training import LocalModel, TrainingSettings, ndarrays_to_state_dict, state_dict_to_ndarrays
+import numpy as np
+import pytest
+import yaml
+
+from src.training import (
+    VAL_FRACTION,
+    LocalModel,
+    TrainingSettings,
+    load_project_config,
+    ndarrays_to_state_dict,
+    run_local_baseline,
+    split_shard_holdout,
+    state_dict_to_ndarrays,
+)
 
 
 def _tiny_local(input_dim: int = 8) -> LocalModel:
@@ -49,13 +62,43 @@ def test_train_on_returns_sample_count():
     assert model.train_on(X, y) == 50
 
 
-def test_evaluate_returns_sklearn_metrics():
+def test_evaluate_uses_threshold_metrics_from_evaluate_module():
     model = _tiny_local()
     X = np.random.randn(20, 8).astype(np.float32)
     y = np.array([0, 1] * 10, dtype=np.int64)
-    loss, metrics = model.evaluate(X, y)
+    cats = np.array(["normal", "DoS"] * 10)
+    loss, metrics = model.evaluate(X, y, cats)
     assert isinstance(loss, float)
-    assert set(metrics) >= {"f1", "precision", "recall", "accuracy"}
+    assert set(metrics) >= {"f1", "precision", "recall", "accuracy", "threshold", "tp", "tn"}
+    assert metrics["threshold"] == pytest.approx(0.5)
+    assert "by_category" not in metrics
+
+
+def test_evaluate_full_includes_by_category():
+    model = _tiny_local()
+    X = np.random.randn(20, 8).astype(np.float32)
+    y = np.array([0, 1] * 10, dtype=np.int64)
+    cats = np.array(["normal", "DoS"] * 10)
+    full = model.evaluate_full(X, y, cats)
+    assert "by_category" in full
+    assert "DoS" in full["by_category"]
+
+
+def test_split_shard_holdout_is_disjoint_and_covers_all():
+    rng = np.random.default_rng(2)
+    n = 100
+    X = rng.standard_normal((n, 4), dtype=np.float32)
+    y = np.array([0] * 50 + [1] * 50)
+    cats = np.array(["normal"] * 50 + ["DoS"] * 30 + ["Probe"] * 20)
+    X_tr, y_tr, cat_tr, X_va, y_va, cat_va = split_shard_holdout(X, y, cats, seed=7)
+    assert len(X_tr) + len(X_va) == n
+    assert len(y_tr) == len(X_tr) == len(cat_tr)
+    assert len(y_va) == len(X_va) == len(cat_va)
+    assert abs(len(X_va) / n - VAL_FRACTION) < 0.05
+    # No index overlap via feature-row identity on this synthetic set:
+    train_rows = {tuple(row.tolist()) for row in X_tr}
+    val_rows = {tuple(row.tolist()) for row in X_va}
+    assert train_rows.isdisjoint(val_rows)
 
 
 def test_from_config_rejects_missing_input_dim():
@@ -64,8 +107,51 @@ def test_from_config_rejects_missing_input_dim():
         "model": {"input_dim": None, "hidden_dims": [8], "num_classes": 2},
         "training": {"local_epochs": 1, "batch_size": 8, "learning_rate": 0.01},
     }
-    try:
+    with pytest.raises(ValueError, match="input_dim"):
         LocalModel.from_config(cfg)
-        assert False, "expected ValueError"
-    except (ValueError, TypeError):
-        pass
+
+
+def test_run_local_baseline_uses_shard_validation_not_kddtest(tmp_path: Path, monkeypatch):
+    from tests.fl_fixtures import write_integration_fl_config
+
+    config_path = write_integration_fl_config(tmp_path, num_rounds=1)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("KDDTest+ must not be loaded for local baseline (M2.1)")
+
+    monkeypatch.setattr("src.preprocess.load_prepared_arrays", boom)
+
+    metrics = run_local_baseline(0, config_path)
+    assert metrics["n_train"] + metrics["n_val"] == 60
+    assert metrics["n_val"] > 0
+    assert "f1" in metrics
+
+
+def test_load_project_config_resolves_preprocessing_paths(tmp_path: Path):
+    processed = tmp_path / "processed" / "full"
+    processed.mkdir(parents=True)
+    (processed / "meta.json").write_text(
+        '{"method": "full", "input_dim": 9, "feature_names": []}\n',
+        encoding="utf-8",
+    )
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        yaml.dump(
+            {
+                "random_seed": 1,
+                "num_clients": 3,
+                "data": {
+                    "processed_dir": str(tmp_path / "processed"),
+                    "shards_dir": str(tmp_path / "shards"),
+                    "shard_partition": "iid",
+                    "preprocessing": "full",
+                },
+                "model": {"input_dim": None, "hidden_dims": [4], "num_classes": 2},
+                "training": {"local_epochs": 1, "batch_size": 8, "learning_rate": 0.01},
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_project_config(cfg_path)
+    assert cfg["model"]["input_dim"] == 9
+    assert cfg["data"]["processed_dir"].endswith("full")

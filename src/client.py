@@ -9,9 +9,8 @@ from typing import Any
 import numpy as np
 from flwr.client import NumPyClient, start_client
 
-from src.preprocess import load_prepared_arrays
 from src.sharding import load_shard
-from src.training import LocalModel, load_project_config, shard_path
+from src.training import LocalModel, load_project_config, shard_path, split_shard_holdout
 
 
 class NSLKDDClient(NumPyClient):
@@ -24,13 +23,15 @@ class NSLKDDClient(NumPyClient):
         y_train: np.ndarray,
         X_eval: np.ndarray,
         y_eval: np.ndarray,
+        cat_eval: np.ndarray | None = None,
     ) -> None:
-        """Przypina lokalny model i tablice treningowe / ewaluacyjne do instancji klienta."""
+        """Przypina lokalny model oraz tablice treningowe / walidacyjne do klienta."""
         self.local = local
         self.X_train = X_train
         self.y_train = y_train
         self.X_eval = X_eval
         self.y_eval = y_eval
+        self.cat_eval = cat_eval
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         """Zwraca bieżące wagi MLP (np. gdy serwer pyta przed rundą).
@@ -49,7 +50,7 @@ class NSLKDDClient(NumPyClient):
 
         Kroki:
         1. Załaduj wagi globalne z serwera do ``LocalModel``.
-        2. Trenuj wyłącznie na ``X_train`` / ``y_train`` (dane nie opuszczają procesu).
+        2. Trenuj wyłącznie na lokalnym 80% shardu (dane nie opuszczają procesu).
         3. Zwróć nowe wagi, ``len(y_train)`` jako ``num_examples`` oraz pusty słownik metryk.
         """
         self.local.set_parameters(parameters)
@@ -61,39 +62,47 @@ class NSLKDDClient(NumPyClient):
         parameters: list[np.ndarray],
         config: dict[str, Any],
     ) -> tuple[float, int, dict[str, float]]:
-        """Ocenia model globalny na wspólnym zbiorze testowym (KDDTest+).
+        """Ocenia model globalny na lokalnej walidacji (20% shardu), nie na KDDTest+.
 
         Kroki:
         1. Załaduj wagi z serwera.
-        2. Policz loss i metryki sklearn na ``X_eval`` / ``y_eval``.
-        3. Zwróć loss, liczbę próbek testowych (do ważenia na serwerze) i słownik metryk.
+        2. Policz loss i metryki przez ``evaluate.evaluate`` na ``X_eval`` / ``y_eval``.
+        3. Zwróć loss, liczbę próbek walidacyjnych (do ważenia na serwerze) i metryki.
         """
         self.local.set_parameters(parameters)
-        loss, metrics = self.local.evaluate(self.X_eval, self.y_eval)
+        loss, metrics = self.local.evaluate(self.X_eval, self.y_eval, self.cat_eval)
         return loss, len(self.y_eval), metrics
 
 
 def build_client(client_id: int, config_path: str | Path) -> NSLKDDClient:
-    """Tworzy klienta Flower dla danego ``client_id``.
+    """Tworzy klienta Flower dla danego ``client_id`` (bez ładowania KDDTest+).
 
     Kroki:
     1. Wczytaj config i shard ``client_{id}.npz`` z katalogu partycji.
-    2. Wczytaj globalny zbiór testowy z ``processed_dir``.
+    2. Podziel shard 80/20 (stratyfikacja po kategorii) na trening i walidację lokalną.
     3. Zbuduj ``LocalModel`` i opakuj dane w ``NSLKDDClient``.
     """
     cfg = load_project_config(config_path)
     data_cfg = cfg["data"]
-    shard = load_shard(
-        shard_path(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
+    path = shard_path(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
+    shard = load_shard(path)
+    if "cat" not in shard:
+        raise KeyError(f"shard {path} lacks 'cat'; re-run sharding / build_data")
+
+    X_tr, y_tr, _cat_tr, X_va, y_va, cat_va = split_shard_holdout(
+        shard["X"],
+        shard["y"],
+        shard["cat"],
+        int(cfg["random_seed"]),
     )
-    processed = load_prepared_arrays(data_cfg["processed_dir"])
     local = LocalModel.from_config(cfg)
     return NSLKDDClient(
         local=local,
-        X_train=shard["X"],
-        y_train=shard["y"],
-        X_eval=processed["X_test"],
-        y_eval=processed["y_test"],
+        X_train=X_tr,
+        y_train=y_tr,
+        X_eval=X_va,
+        y_eval=y_va,
+        cat_eval=cat_va,
     )
 
 

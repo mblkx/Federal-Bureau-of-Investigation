@@ -35,7 +35,7 @@ def write_shards(tmp_path: Path, dim: int = 6, num_clients: int = 3) -> Path:
     """Tworzy ``num_clients`` plików shardów IID w ``shards/iid/``.
 
     Kroki:
-    1. Dla każdego ``client_id`` wygeneruj losowe ``X``, ``y`` i zapisz ``client_{id}.npz``.
+    1. Dla każdego ``client_id`` wygeneruj losowe ``X``, ``y``, ``cat`` i zapisz ``client_{id}.npz``.
     2. Zwróć katalog nadrzędny ``shards`` (ścieżka w configu ``data.shards_dir``).
     """
     rng = np.random.default_rng(1)
@@ -45,7 +45,12 @@ def write_shards(tmp_path: Path, dim: int = 6, num_clients: int = 3) -> Path:
         n = 60
         X = rng.standard_normal((n, dim), dtype=np.float32)
         y = (X[:, 0] > 0).astype(np.int64)
-        np.savez_compressed(shard_dir / f"client_{cid}.npz", X=X, y=y)
+        # Mix categories so stratified_holdout can keep both classes in train/val.
+        cat = np.array(
+            ["normal" if label == 0 else ("DoS" if i % 2 == 0 else "Probe") for i, label in enumerate(y)],
+            dtype="U16",
+        )
+        np.savez_compressed(shard_dir / f"client_{cid}.npz", X=X, y=y, cat=cat)
     return tmp_path / "shards"
 
 

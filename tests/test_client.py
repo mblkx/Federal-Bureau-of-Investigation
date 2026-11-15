@@ -44,6 +44,19 @@ def test_fit_returns_shard_size_not_raw_features():
     )
 
 
+def test_fit_uses_server_round_for_seed(monkeypatch: pytest.MonkeyPatch):
+    client = _client()
+    seen: dict[str, int] = {}
+
+    def fake_train_on(X, y, *, server_round: int = 0):
+        seen["server_round"] = server_round
+        return len(y)
+
+    monkeypatch.setattr(client.local, "train_on", fake_train_on)
+    client.fit(client.get_parameters({}), {"server_round": 4})
+    assert seen["server_round"] == 4
+
+
 def test_assert_fit_payload_rejects_feature_matrix_shape():
     client = _client()
     params = client.get_parameters({})

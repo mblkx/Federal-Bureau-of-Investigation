@@ -12,7 +12,9 @@ from src.training import (
     TrainingSettings,
     load_project_config,
     ndarrays_to_state_dict,
+    round_seed,
     run_local_baseline,
+    server_round_from_config,
     split_shard_holdout,
     state_dict_to_ndarrays,
 )
@@ -155,3 +157,89 @@ def test_load_project_config_resolves_preprocessing_paths(tmp_path: Path):
     cfg = load_project_config(cfg_path)
     assert cfg["model"]["input_dim"] == 9
     assert cfg["data"]["processed_dir"].endswith("full")
+
+
+def test_round_seed_is_base_plus_server_round():
+    assert round_seed(42, 0) == 42
+    assert round_seed(42, 1) == 43
+    assert round_seed(42, 5) == 47
+    with pytest.raises(ValueError, match="server_round"):
+        round_seed(42, -1)
+
+
+def test_server_round_from_config_defaults_and_parses():
+    assert server_round_from_config(None) == 0
+    assert server_round_from_config({}) == 0
+    assert server_round_from_config({"server_round": 3}) == 3
+    assert server_round_from_config({"server_round": 2.0}) == 2
+
+
+def test_train_on_different_rounds_change_updates():
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((64, 8), dtype=np.float32)
+    y = (X[:, 0] > 0).astype(np.int64)
+    base = _tiny_local()
+    start = base.get_parameters()
+
+    a = _tiny_local()
+    a.set_parameters(start)
+    a.train_on(X, y, server_round=1)
+
+    b = _tiny_local()
+    b.set_parameters(start)
+    b.train_on(X, y, server_round=2)
+
+    assert not all(np.allclose(pa, pb) for pa, pb in zip(a.get_parameters(), b.get_parameters()))
+
+
+def test_train_on_same_round_is_deterministic():
+    rng = np.random.default_rng(1)
+    X = rng.standard_normal((64, 8), dtype=np.float32)
+    y = (X[:, 0] > 0).astype(np.int64)
+    start = _tiny_local().get_parameters()
+
+    a = _tiny_local()
+    a.set_parameters(start)
+    a.train_on(X, y, server_round=3)
+
+    b = _tiny_local()
+    b.set_parameters(start)
+    b.train_on(X, y, server_round=3)
+
+    for pa, pb in zip(a.get_parameters(), b.get_parameters()):
+        np.testing.assert_allclose(pa, pb)
+
+
+def test_train_on_resets_adam_state_by_default():
+    rng = np.random.default_rng(2)
+    X = rng.standard_normal((48, 8), dtype=np.float32)
+    y = (X[:, 0] > 0).astype(np.int64)
+    model = _tiny_local()
+    model.train_on(X, y, server_round=0)
+    assert model.optimizer.state  # moments after first fit
+
+    opt_before = model.optimizer
+    model.train_on(X, y, server_round=1)
+    assert model.optimizer is not opt_before
+    # Fresh Adam: state fills only after the new fit's steps.
+    assert model.optimizer.state
+
+
+def test_train_on_can_keep_adam_when_disabled():
+    settings = TrainingSettings(
+        local_epochs=1,
+        batch_size=16,
+        learning_rate=0.05,
+        random_seed=0,
+        reset_optimizer_each_round=False,
+    )
+    model = LocalModel(8, [16], 2, settings)
+    rng = np.random.default_rng(3)
+    X = rng.standard_normal((32, 8), dtype=np.float32)
+    y = (X[:, 0] > 0).astype(np.int64)
+    model.train_on(X, y, server_round=0)
+    opt_before = model.optimizer
+    state_len_before = len(model.optimizer.state)
+    model.train_on(X, y, server_round=1)
+    assert model.optimizer is opt_before
+    assert len(model.optimizer.state) == state_len_before

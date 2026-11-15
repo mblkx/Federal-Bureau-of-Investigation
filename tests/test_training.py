@@ -1,5 +1,6 @@
 """Unit tests for local training (no NSL-KDD download)."""
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -243,3 +244,89 @@ def test_train_on_can_keep_adam_when_disabled():
     model.train_on(X, y, server_round=1)
     assert model.optimizer is opt_before
     assert len(model.optimizer.state) == state_len_before
+
+
+def _tiny_ae(input_dim: int = 8) -> LocalModel:
+    return LocalModel(
+        input_dim=input_dim,
+        hidden_dims=[16, 8],
+        num_classes=2,
+        settings=TrainingSettings(
+            local_epochs=5,
+            batch_size=32,
+            learning_rate=0.05,
+            random_seed=0,
+        ),
+        architecture="autoencoder",
+        latent_dim=4,
+    )
+
+
+def test_autoencoder_trains_only_on_normal_and_returns_normal_count():
+    rng = np.random.default_rng(4)
+    n = 100
+    X = rng.standard_normal((n, 8), dtype=np.float32)
+    y = np.array([0] * 70 + [1] * 30, dtype=np.int64)
+    # Ataki przesunięte — AE nie powinien ich widzieć w treningu.
+    X[y == 1] += 5.0
+    model = _tiny_ae()
+    n_used = model.train_on(X, y, server_round=0)
+    assert n_used == 70
+
+
+def test_autoencoder_rejects_train_without_normals():
+    model = _tiny_ae()
+    X = np.random.randn(20, 8).astype(np.float32)
+    y = np.ones(20, dtype=np.int64)
+    with pytest.raises(ValueError, match="normalnej"):
+        model.train_on(X, y)
+
+
+def test_autoencoder_score_is_reconstruction_mse_and_threshold_on_val():
+    rng = np.random.default_rng(5)
+    X_norm = rng.standard_normal((80, 8), dtype=np.float32)
+    X_atk = rng.standard_normal((40, 8), dtype=np.float32) + 3.0
+    X = np.vstack([X_norm, X_atk])
+    y = np.array([0] * 80 + [1] * 40, dtype=np.int64)
+    model = _tiny_ae()
+    model.train_on(X, y, server_round=0)
+    scores = model.predict_attack_score(X)
+    assert scores.shape == (120,)
+    assert scores[y == 1].mean() > scores[y == 0].mean()
+
+    with pytest.raises(ValueError, match="próg"):
+        model.evaluate(X, y)
+
+    tau = model.fit_threshold(X, y)
+    assert math.isfinite(tau)
+    loss, metrics = model.evaluate(X, y)
+    assert isinstance(loss, float)
+    assert metrics["f1"] > 0.5
+    assert metrics["threshold"] == pytest.approx(tau)
+
+
+def test_autoencoder_parameter_roundtrip_matches_mlp_api():
+    model = _tiny_ae(input_dim=6)
+    original = model.get_parameters()
+    model.set_parameters([p + 0.01 for p in original])
+    model.set_parameters(original)
+    restored = model.get_parameters()
+    for a, b in zip(original, restored):
+        np.testing.assert_allclose(a, b)
+
+
+def test_from_config_builds_autoencoder(tmp_path: Path):
+    cfg = {
+        "random_seed": 1,
+        "model": {
+            "architecture": "autoencoder",
+            "input_dim": 10,
+            "hidden_dims": [16, 8],
+            "latent_dim": 4,
+            "num_classes": 2,
+        },
+        "training": {"local_epochs": 1, "batch_size": 8, "learning_rate": 0.01},
+    }
+    model = LocalModel.from_config(cfg)
+    assert model.is_autoencoder
+    assert model.latent_dim == 4

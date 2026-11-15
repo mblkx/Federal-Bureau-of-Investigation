@@ -9,21 +9,30 @@ import yaml
 
 
 def write_processed(tmp_path: Path, dim: int = 6) -> Path:
-    """Tworzy minimalny ``nsl_kdd_processed.npz`` z syntetycznym testem.
+    """Tworzy minimalny ``nsl_kdd_processed.npz`` z syntetycznym train/test.
 
     Kroki:
-    1. Wygeneruj ``X_test``, binarne ``y_test`` i kategorie ``cat_test``.
+    1. Wygeneruj train i test (X, y, cat) — train potrzebny do progu AE (M2.3).
     2. Zapisz plik w ``tmp_path/processed/`` i zwróć ten katalog.
     """
     rng = np.random.default_rng(0)
-    n_test = 40
+    n_train, n_test = 80, 40
+    X_train = rng.standard_normal((n_train, dim), dtype=np.float32)
+    y_train = (X_train[:, 0] > 0).astype(np.int64)
+    cat_train = np.array(
+        ["normal" if y == 0 else ("DoS" if i % 2 == 0 else "Probe") for i, y in enumerate(y_train)],
+        dtype="U16",
+    )
     X_test = rng.standard_normal((n_test, dim), dtype=np.float32)
     y_test = (X_test[:, 0] > 0).astype(np.int64)
-    cat_test = np.array(["normal" if y == 0 else "DoS" for y in y_test])
+    cat_test = np.array(["normal" if y == 0 else "DoS" for y in y_test], dtype="U16")
     out = tmp_path / "processed"
     out.mkdir()
     np.savez_compressed(
         out / "nsl_kdd_processed.npz",
+        X_train=X_train,
+        y_train=y_train,
+        cat_train=cat_train,
         X_test=X_test,
         y_test=y_test,
         cat_test=cat_test,

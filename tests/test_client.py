@@ -57,6 +57,28 @@ def test_fit_uses_server_round_for_seed(monkeypatch: pytest.MonkeyPatch):
     assert seen["server_round"] == 4
 
 
+def test_client_autoencoder_fit_and_evaluate(tmp_path: Path):
+    from tests.fl_fixtures import write_integration_fl_config
+    import yaml
+
+    config_path = write_integration_fl_config(tmp_path, num_rounds=1)
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    cfg["model"]["architecture"] = "autoencoder"
+    cfg["model"]["latent_dim"] = 3
+    config_path.write_text(yaml.dump(cfg), encoding="utf-8")
+
+    client = build_client(0, config_path)
+    assert client.local.is_autoencoder
+    params = client.get_parameters({})
+    out_params, num_examples, _ = client.fit(params, {"server_round": 1})
+    assert num_examples == int((client.y_train == 0).sum())
+    assert len(out_params) == len(params)
+    loss, n_eval, metrics = client.evaluate(out_params, {})
+    assert n_eval == len(client.y_eval)
+    assert isinstance(loss, float)
+    assert "f1" in metrics
+
+
 def test_assert_fit_payload_rejects_feature_matrix_shape():
     client = _client()
     params = client.get_parameters({})

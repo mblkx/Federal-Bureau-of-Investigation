@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 import math
 from pathlib import Path
 from typing import Any, Sequence
@@ -209,7 +208,7 @@ def run_local_client_baseline(
 def run_baselines(
     config_path: str | Path = "src/config.yaml",
     *,
-    results_dir: str | Path = "results/m2",
+    results_dir: str | Path = "results/baselines",
     architectures: Sequence[str] = ARCHITECTURES,
     partitions: Sequence[str] | None = None,
     run_centralized: bool = True,

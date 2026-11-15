@@ -83,10 +83,10 @@ def test_run_local_client_baseline_for_autoencoder(tmp_path: Path):
     assert result["threshold"] is not None
 
 
-def test_run_m2_baselines_matrix_writes_files(tmp_path: Path):
+def test_run_baselines_matrix_writes_files(tmp_path: Path):
     config_path = _write_config(tmp_path)
-    results_dir = tmp_path / "results_m2"
-    summary = run_m2_baselines(
+    results_dir = tmp_path / "results_baselines"
+    summary = run_baselines(
         config_path,
         results_dir=results_dir,
         architectures=["mlp", "autoencoder"],

@@ -25,6 +25,10 @@ from src.model import MLPClassifier
 VAL_FRACTION = 0.2
 ATTACK_SCORE_THRESHOLD = 0.5
 
+# M2.2: after FedAvg the global weights jump; keep Adam moments across rounds would
+# reuse momentum/variance from a different parameter trajectory. Reset each local fit.
+DEFAULT_RESET_OPTIMIZER_EACH_ROUND = True
+
 
 @dataclass(frozen=True)
 class TrainingSettings:
@@ -32,6 +36,7 @@ class TrainingSettings:
     batch_size: int
     learning_rate: float
     random_seed: int
+    reset_optimizer_each_round: bool = DEFAULT_RESET_OPTIMIZER_EACH_ROUND
 
 
 def load_project_config(path: str | Path) -> dict[str, Any]:
@@ -44,6 +49,27 @@ def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def round_seed(base_seed: int, server_round: int) -> int:
+    """Per-round RNG seed: ``base_seed + server_round`` (Flower rounds are 1-based).
+
+    Local baselines (no FL) use ``server_round=0`` so the effective seed equals
+    ``config.random_seed``.
+    """
+    if server_round < 0:
+        raise ValueError(f"server_round must be >= 0, got {server_round}")
+    return int(base_seed) + int(server_round)
+
+
+def server_round_from_config(config: dict[str, Any] | None) -> int:
+    """Read ``server_round`` from a Flower fit/evaluate config (default 0)."""
+    if not config:
+        return 0
+    if "server_round" not in config:
+        return 0
+    return int(config["server_round"])
+
 
 
 def shard_path(
@@ -136,6 +162,12 @@ class LocalModel:
             batch_size=int(train_cfg["batch_size"]),
             learning_rate=float(train_cfg["learning_rate"]),
             random_seed=int(cfg["random_seed"]),
+            reset_optimizer_each_round=bool(
+                train_cfg.get(
+                    "reset_optimizer_each_round",
+                    DEFAULT_RESET_OPTIMIZER_EACH_ROUND,
+                )
+            ),
         )
         raw_dim = model_cfg.get("input_dim")
         if raw_dim is None:
@@ -160,19 +192,35 @@ class LocalModel:
         state = ndarrays_to_state_dict(self._param_keys, parameters)
         self.model.load_state_dict(state, strict=True)
 
-    def train_on(self, X: np.ndarray, y: np.ndarray) -> int:
+    def reset_optimizer(self) -> None:
+        """Recreate Adam so moments do not carry over after a global weight update."""
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(), lr=self.settings.learning_rate
+        )
+
+    def train_on(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        server_round: int = 0,
+    ) -> int:
         """Trenuje MLP na lokalnym zbiorze treningowym przez ``local_epochs`` epok SGD.
 
-        Kroki:
-        1. Ustaw seed i zbuduj ``DataLoader`` z deterministycznym tasowaniem batchy.
-        2. Dla każdej epoki: pętla po batchach, forward, loss, backward, krok Adam.
-        3. Zwróć ``len(y)`` — Flower traktuje to jako ``num_examples`` w weighted FedAvg.
+        Kroki (M2.2):
+        1. Ustaw ziarno ``round_seed(base, server_round)`` (tasowanie batchy zależy od rundy).
+        2. Opcjonalnie zresetuj Adam (domyślnie tak — po skoku wag z FedAvg).
+        3. Dla każdej epoki: pętla po batchach, forward, loss, backward, krok Adam.
+        4. Zwróć ``len(y)`` — Flower traktuje to jako ``num_examples`` w weighted FedAvg.
         """
-        set_seed(self.settings.random_seed)
+        seed = round_seed(self.settings.random_seed, server_round)
+        set_seed(seed)
+        if self.settings.reset_optimizer_each_round:
+            self.reset_optimizer()
         X_t = torch.as_tensor(X, dtype=torch.float32, device=self.device)
         y_t = torch.as_tensor(y, dtype=torch.long, device=self.device)
         generator = torch.Generator(device="cpu")
-        generator.manual_seed(self.settings.random_seed)
+        generator.manual_seed(seed)
         loader = DataLoader(
             TensorDataset(X_t, y_t),
             batch_size=self.settings.batch_size,
@@ -254,7 +302,6 @@ def run_local_baseline(
     if override_shard_partition is not None:
         data_cfg["shard_partition"] = override_shard_partition
     path = shard_path(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
-    print(data_cfg["shards_dir"], data_cfg["shard_partition"], client_id)
     shard = load_shard(path)
     if "cat" not in shard:
         raise KeyError(f"shard {path} lacks 'cat'; re-run sharding / build_data")
@@ -267,7 +314,8 @@ def run_local_baseline(
     )
 
     local = LocalModel.from_config(cfg)
-    n = local.train_on(X_tr, y_tr)
+    # Local baseline is a single fit: server_round=0 → seed == config.random_seed.
+    n = local.train_on(X_tr, y_tr, server_round=0)
     loss, metrics = local.evaluate(X_va, y_va, cat_va)
     full = local.evaluate_full(X_va, y_va, cat_va)
     print(f"client_{client_id}: trained on {n} samples from {path}")

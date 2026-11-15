@@ -10,7 +10,13 @@ import numpy as np
 from flwr.client import NumPyClient, start_client
 
 from src.sharding import load_shard
-from src.training import LocalModel, load_project_config, shard_path, split_shard_holdout
+from src.training import (
+    LocalModel,
+    load_project_config,
+    server_round_from_config,
+    shard_path,
+    split_shard_holdout,
+)
 
 
 class NSLKDDClient(NumPyClient):
@@ -50,11 +56,16 @@ class NSLKDDClient(NumPyClient):
 
         Kroki:
         1. Załaduj wagi globalne z serwera do ``LocalModel``.
-        2. Trenuj wyłącznie na lokalnym 80% shardu (dane nie opuszczają procesu).
+        2. Trenuj na lokalnym 80% shardu z ziarnem zależnym od ``server_round`` (M2.2);
+           Adam jest resetowany na początku fitu (domyślnie).
         3. Zwróć nowe wagi, ``len(y_train)`` jako ``num_examples`` oraz pusty słownik metryk.
         """
         self.local.set_parameters(parameters)
-        num_examples = self.local.train_on(self.X_train, self.y_train)
+        num_examples = self.local.train_on(
+            self.X_train,
+            self.y_train,
+            server_round=server_round_from_config(config),
+        )
         return self.local.get_parameters(), num_examples, {}
 
     def evaluate(

@@ -21,6 +21,8 @@ training:
   local_epochs: 1
   batch_size: 256
   learning_rate: 0.001
+  # M2.2: recreate Adam after each FedAvg weight update (stale moments otherwise).
+  reset_optimizer_each_round: true
 
 features:  # preprocessing method no. 2 (feature extraction), see src/features.py
   method: pca  # filter | select | pca

@@ -108,7 +108,9 @@ def run_inprocess_fedavg(config_path: str | Path) -> list[np.ndarray]:
     partition = data_cfg["shard_partition"]
 
     global_model = LocalModel.from_config(cfg)
-    for _round in range(num_rounds):
+    for round_idx in range(num_rounds):
+        # Mirror Flower: server_round is 1-based in on_fit_config_fn.
+        server_round = round_idx + 1
         global_params = global_model.get_parameters()
         state_dicts: list[OrderedDict[str, torch.Tensor]] = []
         sample_counts: list[int] = []
@@ -117,7 +119,11 @@ def run_inprocess_fedavg(config_path: str | Path) -> list[np.ndarray]:
             shard = load_shard(shard_path(data_cfg["shards_dir"], partition, client_id))
             client = LocalModel.from_config(cfg)
             client.set_parameters(global_params)
-            num_examples = client.train_on(shard["X"], shard["y"])
+            num_examples = client.train_on(
+                shard["X"],
+                shard["y"],
+                server_round=server_round,
+            )
             state_dicts.append(OrderedDict(client.model.state_dict()))
             sample_counts.append(num_examples)
 

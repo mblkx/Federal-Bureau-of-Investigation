@@ -104,6 +104,11 @@ class FedAvgRecordingFinal(FedAvg):
         return aggregated, metrics
 
 
+def fit_config(server_round: int) -> dict[str, int]:
+    """Flower ``on_fit_config_fn``: przekaż numer rundy do klientów (M2.2 seed)."""
+    return {"server_round": int(server_round)}
+
+
 def build_fedavg_strategy(
     config_path: str | Path,
     *,
@@ -114,8 +119,8 @@ def build_fedavg_strategy(
     Kroki:
     1. Wczytaj config i ustal ``n`` — liczbę klientów (z YAML lub argumentu domyślnego).
     2. Zbuduj ``initial_parameters`` z tego samego configu (spójny start rundy 0).
-    3. Zwróć ``FedAvgRecordingFinal`` z ``fraction_* = 1.0``, ``min_*_clients = n`` oraz
-       callbackiem agregacji metryk evaluate.
+    3. Zwróć ``FedAvgRecordingFinal`` z ``fraction_* = 1.0``, ``min_*_clients = n``,
+       ``on_fit_config_fn`` (``server_round``) oraz callbackiem agregacji metryk evaluate.
     """
     cfg = load_project_config(config_path)
     n = int(cfg.get("num_clients", num_clients))
@@ -127,6 +132,7 @@ def build_fedavg_strategy(
         min_evaluate_clients=n,
         min_available_clients=n,
         initial_parameters=initial_parameters,
+        on_fit_config_fn=fit_config,
         evaluate_metrics_aggregation_fn=log_weighted_evaluate_metrics,
     )
 

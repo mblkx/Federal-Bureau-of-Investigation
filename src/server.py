@@ -105,7 +105,7 @@ class FedAvgRecordingFinal(FedAvg):
 
 
 def fit_config(server_round: int) -> dict[str, int]:
-    """Flower ``on_fit_config_fn``: przekaż numer rundy do klientów (M2.2 seed)."""
+    """Flower ``on_fit_config_fn``: przekaż numer rundy do klientów (ziarno M2.2)."""
     return {"server_round": int(server_round)}
 
 

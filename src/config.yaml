@@ -1,4 +1,4 @@
-# Team-wide hyperparameters — adjust during M2/M4 tuning.
+# Wspólne hiperparametry zespołu — strojenie w M2/M4.
 
 random_seed: 42
 num_clients: 3
@@ -8,27 +8,27 @@ data:
   test_path: data/KDDTest+.txt
   processed_dir: data/processed
   shards_dir: data/shards
-  shard_partition: iid  # subdir under shards_dir/<preprocessing> (iid, category, dirichlet_a0.5, ...)
-  preprocessing: full  # full (method no. 1, all features) | extracted (method no. 2)
+  shard_partition: iid  # podkatalog shards_dir/<preprocessing> (iid, category, dirichlet_a0.5, ...)
+  preprocessing: full  # full (metoda 1, wszystkie cechy) | extracted (metoda 2)
   dirichlet_alpha: 0.5
 
 model:
-  input_dim: null  # auto: read from data/processed/<preprocessing>/meta.json
+  input_dim: null  # auto: odczyt z data/processed/<preprocessing>/meta.json
   hidden_dims: [128, 64]
-  num_classes: 2  # binary normal vs attack (map multi-class in preprocess)
+  num_classes: 2  # binarne normal vs atak (mapowanie wieloklasowe w preprocess)
 
 training:
   local_epochs: 1
   batch_size: 256
   learning_rate: 0.001
-  # M2.2: recreate Adam after each FedAvg weight update (stale moments otherwise).
+  # M2.2: twórz Adama od nowa po każdej aktualizacji wag FedAvg (inaczej zostają stare momenty).
   reset_optimizer_each_round: true
 
-features:  # preprocessing method no. 2 (feature extraction), see src/features.py
+features:  # metoda obróbki nr 2 (ekstrakcja cech), patrz src/features.py
   method: pca  # filter | select | pca
   corr_threshold: 0.95
-  k: 40  # select only
-  n_components: 0.95  # pca only (variance share)
+  k: 40  # tylko select
+  n_components: 0.95  # tylko pca (udział wariancji)
 
 federated:
   num_rounds: 5

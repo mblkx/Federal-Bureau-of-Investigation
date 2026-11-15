@@ -109,7 +109,7 @@ def run_inprocess_fedavg(config_path: str | Path) -> list[np.ndarray]:
 
     global_model = LocalModel.from_config(cfg)
     for round_idx in range(num_rounds):
-        # Mirror Flower: server_round is 1-based in on_fit_config_fn.
+        # Jak w Flower: server_round jest 1-based w on_fit_config_fn.
         server_round = round_idx + 1
         global_params = global_model.get_parameters()
         state_dicts: list[OrderedDict[str, torch.Tensor]] = []

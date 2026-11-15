@@ -196,7 +196,7 @@ def save_shards(
     out.mkdir(parents=True, exist_ok=True)
     categories = np.asarray(categories)
     for k, idx in enumerate(shards):
-        # Fixed-width unicode avoids object arrays (np.load allow_pickle=False).
+        # Stała szerokość unicode unika tablic object (np.load z allow_pickle=False).
         cat_k = np.asarray(categories[idx], dtype="U32")
         np.savez_compressed(
             out / f"client_{k}.npz",
@@ -211,7 +211,7 @@ def save_shards(
  
  
 def load_shard(path: str | Path) -> Dict[str, np.ndarray]:
-    # allow_pickle for older shards that stored ``cat`` as object dtype.
+    # allow_pickle dla starszych shardów, które trzymały ``cat`` jako object dtype.
     with np.load(path, allow_pickle=True) as f:
         data = {k: f[k] for k in f.files}
     if "cat" in data:

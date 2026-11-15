@@ -1,4 +1,4 @@
-"""Local PyTorch training on one NSL-KDD shard (M2 baseline + Flower client backend)."""
+"""Lokalny trening PyTorch na jednym shardzie NSL-KDD (baseline M2 + backend klienta Flower)."""
 
 from __future__ import annotations
 
@@ -21,12 +21,12 @@ from src.evaluate import evaluate as score_predictions
 from src.evaluate import format_report, stratified_holdout
 from src.model import MLPClassifier
 
-# Local holdout share (plan M2.1 / evaluation_protocol.md): train on 80%, validate on 20%.
+# Udział holdoutu lokalnego (plan M2.1 / evaluation_protocol.md): trening 80%, walidacja 20%.
 VAL_FRACTION = 0.2
 ATTACK_SCORE_THRESHOLD = 0.5
 
-# M2.2: after FedAvg the global weights jump; keep Adam moments across rounds would
-# reuse momentum/variance from a different parameter trajectory. Reset each local fit.
+# M2.2: po FedAvg wagi globalne „skaczą”; zachowanie momentów Adama między rundami
+# oznaczałoby użycie momentum/wariancji z innej trajektorii parametrów. Reset przy każdym lokalnym fit.
 DEFAULT_RESET_OPTIMIZER_EACH_ROUND = True
 
 
@@ -40,7 +40,7 @@ class TrainingSettings:
 
 
 def load_project_config(path: str | Path) -> dict[str, Any]:
-    """Load YAML and resolve preprocessing paths / ``model.input_dim`` from data."""
+    """Wczytaj YAML i uzupełnij ścieżki preprocessingu / ``model.input_dim`` na podstawie danych."""
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     return resolve_data_config(raw)
 
@@ -52,10 +52,10 @@ def set_seed(seed: int) -> None:
 
 
 def round_seed(base_seed: int, server_round: int) -> int:
-    """Per-round RNG seed: ``base_seed + server_round`` (Flower rounds are 1-based).
+    """Ziarno RNG zależne od rundy: ``base_seed + server_round`` (Flower numeruje rundy od 1).
 
-    Local baselines (no FL) use ``server_round=0`` so the effective seed equals
-    ``config.random_seed``.
+    Baseline lokalny (bez FL) używa ``server_round=0``, więc efektywne ziarno
+    równa się ``config.random_seed``.
     """
     if server_round < 0:
         raise ValueError(f"server_round must be >= 0, got {server_round}")
@@ -63,7 +63,7 @@ def round_seed(base_seed: int, server_round: int) -> int:
 
 
 def server_round_from_config(config: dict[str, Any] | None) -> int:
-    """Read ``server_round`` from a Flower fit/evaluate config (default 0)."""
+    """Odczytaj ``server_round`` z konfiguracji fit/evaluate Flower (domyślnie 0)."""
     if not config:
         return 0
     if "server_round" not in config:
@@ -103,7 +103,7 @@ def split_shard_holdout(
     *,
     val_fraction: float = VAL_FRACTION,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Split one client shard into local train / validation (stratified by category)."""
+    """Podziel shard klienta na lokalny train/val (stratyfikacja po kategorii)."""
     train_idx, val_idx = stratified_holdout(categories, val_fraction, seed)
     return (
         X[train_idx],
@@ -116,7 +116,7 @@ def split_shard_holdout(
 
 
 def scalar_metrics(result: dict[str, object]) -> dict[str, float]:
-    """Flatten ``evaluate.evaluate`` output to floats suitable for Flower aggregation."""
+    """Spłaszcz wynik ``evaluate.evaluate`` do floatów nadających się do agregacji Flower."""
     out: dict[str, float] = {}
     for key, value in result.items():
         if key == "by_category":
@@ -132,7 +132,7 @@ def scalar_metrics(result: dict[str, object]) -> dict[str, float]:
 
 
 class LocalModel:
-    """Train and evaluate the MLP on arrays (X, y) from one client shard."""
+    """Trening i ewaluacja MLP na tablicach (X, y) z jednego shardu klienta."""
 
     def __init__(
         self,
@@ -193,7 +193,7 @@ class LocalModel:
         self.model.load_state_dict(state, strict=True)
 
     def reset_optimizer(self) -> None:
-        """Recreate Adam so moments do not carry over after a global weight update."""
+        """Utwórz Adama od nowa, żeby momenty nie przenosiły się po aktualizacji wag globalnych."""
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self.settings.learning_rate
         )
@@ -259,7 +259,7 @@ class LocalModel:
         *,
         threshold: float = ATTACK_SCORE_THRESHOLD,
     ) -> tuple[float, dict[str, float]]:
-        """Score a hold-out set: CE loss plus ``evaluate.evaluate`` metrics (τ = 0.5)."""
+        """Oceń hold-out: loss CE oraz metryki z ``evaluate.evaluate`` (τ = 0,5)."""
         self.model.eval()
         X_t = torch.as_tensor(X, dtype=torch.float32, device=self.device)
         y_t = torch.as_tensor(y, dtype=torch.long, device=self.device)
@@ -278,7 +278,7 @@ class LocalModel:
         *,
         threshold: float = ATTACK_SCORE_THRESHOLD,
     ) -> dict[str, object]:
-        """Full ``evaluate.evaluate`` dict (incl. ``by_category``) for local reporting."""
+        """Pełny słownik ``evaluate.evaluate`` (w tym ``by_category``) do raportu lokalnego."""
         scores = self.predict_attack_proba(X)
         return score_predictions(y, scores, categories, threshold=threshold)
 
@@ -289,9 +289,9 @@ def run_local_baseline(
     *,
     override_shard_partition: str | None = None,
 ) -> dict[str, object]:
-    """M2.1: train on 80% of one shard, evaluate on the local 20% validation split.
+    """M2.1: trenuj na 80% shardu, oceń na lokalnych 20% walidacji.
 
-    Does not load ``KDDTest+`` (reserved for server-side / final reporting).
+    Nie ładuje ``KDDTest+`` (zarezerwowany na raport końcowy po stronie serwera).
     """
     from src.sharding import load_shard
 
@@ -314,7 +314,7 @@ def run_local_baseline(
     )
 
     local = LocalModel.from_config(cfg)
-    # Local baseline is a single fit: server_round=0 → seed == config.random_seed.
+    # Baseline lokalny to pojedynczy fit: server_round=0 → ziarno == config.random_seed.
     n = local.train_on(X_tr, y_tr, server_round=0)
     loss, metrics = local.evaluate(X_va, y_va, cat_va)
     full = local.evaluate_full(X_va, y_va, cat_va)
@@ -326,11 +326,15 @@ def run_local_baseline(
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Local baseline: train on 80% of one shard, validate on 20% (M2.1)."
+        description="Baseline lokalny: trening na 80% shardu, walidacja na 20% (M2.1)."
     )
-    ap.add_argument("--cid", type=int, required=True, help="Client id 0..num_clients-1")
+    ap.add_argument("--cid", type=int, required=True, help="Id klienta 0..num_clients-1")
     ap.add_argument("--config", default="src/config.yaml")
-    ap.add_argument("--shard_partition", default=None, help="Override config.data.shard_partition")
+    ap.add_argument(
+        "--shard_partition",
+        default=None,
+        help="Nadpisz config.data.shard_partition",
+    )
     args = ap.parse_args()
     run_local_baseline(args.cid, args.config, override_shard_partition=args.shard_partition)
 

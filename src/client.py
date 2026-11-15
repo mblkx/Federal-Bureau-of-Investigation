@@ -40,7 +40,7 @@ class NSLKDDClient(NumPyClient):
         self.cat_eval = cat_eval
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
-        """Zwraca bieżące wagi MLP (np. gdy serwer pyta przed rundą).
+        """Zwraca bieżące wagi modelu (MLP lub autoencoder).
 
         Kroki:
         1. Odczytaj ``state_dict`` z ``LocalModel`` i serializuj do listy ``ndarray``.
@@ -57,8 +57,9 @@ class NSLKDDClient(NumPyClient):
         Kroki:
         1. Załaduj wagi globalne z serwera do ``LocalModel``.
         2. Trenuj na lokalnym 80% shardu z ziarnem zależnym od ``server_round`` (M2.2);
-           Adam jest resetowany na początku fitu (domyślnie).
-        3. Zwróć nowe wagi, ``len(y_train)`` jako ``num_examples`` oraz pusty słownik metryk.
+           Adam jest resetowany na początku fitu (domyślnie). AE trenuje tylko ``y==0``.
+        3. Dla AE dobierz próg na lokalnej walidacji (max F1) — próg nie jest agregowany.
+        4. Zwróć nowe wagi, ``num_examples`` oraz pusty słownik metryk.
         """
         self.local.set_parameters(parameters)
         num_examples = self.local.train_on(
@@ -66,6 +67,8 @@ class NSLKDDClient(NumPyClient):
             self.y_train,
             server_round=server_round_from_config(config),
         )
+        if self.local.is_autoencoder:
+            self.local.fit_threshold(self.X_eval, self.y_eval)
         return self.local.get_parameters(), num_examples, {}
 
     def evaluate(
@@ -77,10 +80,12 @@ class NSLKDDClient(NumPyClient):
 
         Kroki:
         1. Załaduj wagi z serwera.
-        2. Policz loss i metryki przez ``evaluate.evaluate`` na ``X_eval`` / ``y_eval``.
-        3. Zwróć loss, liczbę próbek walidacyjnych (do ważenia na serwerze) i metryki.
+        2. Dla AE dobierz ``τ`` na tej walidacji (dopasowanie do bieżących wag globalnych).
+        3. Policz loss i metryki przez ``evaluate.evaluate``.
         """
         self.local.set_parameters(parameters)
+        if self.local.is_autoencoder:
+            self.local.fit_threshold(self.X_eval, self.y_eval)
         loss, metrics = self.local.evaluate(self.X_eval, self.y_eval, self.cat_eval)
         return loss, len(self.y_eval), metrics
 
@@ -91,7 +96,7 @@ def build_client(client_id: int, config_path: str | Path) -> NSLKDDClient:
     Kroki:
     1. Wczytaj config i shard ``client_{id}.npz`` z katalogu partycji.
     2. Podziel shard 80/20 (stratyfikacja po kategorii) na trening i walidację lokalną.
-    3. Zbuduj ``LocalModel`` i opakuj dane w ``NSLKDDClient``.
+    3. Zbuduj ``LocalModel`` (MLP lub AE wg configu) i opakuj dane w ``NSLKDDClient``.
     """
     cfg = load_project_config(config_path)
     data_cfg = cfg["data"]
@@ -125,14 +130,14 @@ def main() -> None:
     2. W trybie ``local-only`` wywołaj ``run_local_baseline`` i zakończ.
     3. W trybie federacji zbuduj klienta i połącz się przez ``start_client``.
     """
-    ap = argparse.ArgumentParser(description="Start a Flower client for NSL-KDD FL.")
-    ap.add_argument("--cid", type=int, required=True, help="Client id 0..num_clients-1")
+    ap = argparse.ArgumentParser(description="Uruchom klienta Flower dla FL na NSL-KDD.")
+    ap.add_argument("--cid", type=int, required=True, help="Id klienta 0..num_clients-1")
     ap.add_argument("--config", default="src/config.yaml")
     ap.add_argument("--server-address", default="localhost:8080")
     ap.add_argument(
         "--local-only",
         action="store_true",
-        help="Skip Flower; run M2 local baseline on this shard only",
+        help="Pomiń Flower; uruchom lokalny baseline M2 tylko na tym shardzie",
     )
     args = ap.parse_args()
 

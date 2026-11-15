@@ -48,8 +48,8 @@ def main() -> None:
     ap.add_argument(
         "--threshold",
         type=float,
-        default=0.5,
-        help="Attack score threshold for evaluate.evaluate",
+        default=None,
+        help="Próg wyniku ataku; domyślnie MLP=0,5, AE=dobór na walidacji train",
     )
     args = ap.parse_args()
 

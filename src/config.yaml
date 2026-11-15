@@ -13,9 +13,11 @@ data:
   dirichlet_alpha: 0.5
 
 model:
+  architecture: mlp  # mlp | autoencoder (M2.3)
   input_dim: null  # auto: odczyt z data/processed/<preprocessing>/meta.json
   hidden_dims: [128, 64]
-  num_classes: 2  # binarne normal vs atak (mapowanie wieloklasowe w preprocess)
+  latent_dim: 32  # tylko autoencoder; wąskie gardło rekonstrukcji
+  num_classes: 2  # binarne normal vs atak (używane przez MLP)
 
 training:
   local_epochs: 1

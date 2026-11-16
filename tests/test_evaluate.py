@@ -8,7 +8,7 @@ import pytest
  
 from src.evaluate import (
     compute_metrics, detection_rate_by_category, evaluate, format_report,
-    save_results, stratified_holdout,
+    save_results, select_threshold_max_f1, stratified_holdout,
 )
  
 #tp=3, fn=1, fp=1, tn=5
@@ -65,6 +65,15 @@ def test_evaluate_threshold_and_categories():
     assert (r["tp"], r["fn"], r["fp"], r["tn"]) == (1, 1, 1, 1)
     assert r["by_category"]["DoS"] == pytest.approx(0.5)
     assert evaluate(y, scores, cats, threshold=0.3)["recall"] == pytest.approx(1.0)
+
+
+def test_select_threshold_max_f1_prefers_separating_cut():
+    # Ataki mają wyższe wyniki; optymalny próg leży między klasami.
+    y = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+    scores = np.array([0.1, 0.2, 0.15, 0.25, 0.8, 0.9, 0.85, 0.95])
+    tau = select_threshold_max_f1(y, scores)
+    assert 0.25 < tau <= 0.8
+    assert evaluate(y, scores, threshold=tau)["f1"] == pytest.approx(1.0)
  
  
 def test_report_and_save(tmp_path):

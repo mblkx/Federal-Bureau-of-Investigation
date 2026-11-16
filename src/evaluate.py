@@ -106,6 +106,43 @@ def evaluate(
     return result
 
 
+def select_threshold_max_f1(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    *,
+    max_candidates: int = 256,
+) -> float:
+    """Dobierz próg ``τ`` maksymalizujący F1 na zbiorze walidacyjnym (M2.3, autoencoder).
+
+    Kandydaci to unikalne wartości wyniku (ograniczone do ``max_candidates``
+    równomiernie rozmieszczonych kwantyli). Przy remisie wybierany jest niższy próg.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_score = np.asarray(y_score, dtype=float)
+    if len(y_true) == 0:
+        raise ValueError("cannot select threshold on an empty set")
+    if len(np.unique(y_true)) < 2:
+        # Jedna klasa — F1 nie rozróżnia progów; weź medianę wyniku.
+        return float(np.median(y_score))
+
+    uniq = np.unique(y_score)
+    if len(uniq) > max_candidates:
+        qs = np.linspace(0.0, 1.0, max_candidates)
+        candidates = np.unique(np.quantile(y_score, qs))
+    else:
+        candidates = uniq
+
+    best_tau = float(candidates[0])
+    best_f1 = -1.0
+    for tau in candidates:
+        pred = (y_score >= tau).astype(int)
+        f1 = float(f1_score(y_true, pred, zero_division=0))
+        if f1 > best_f1 or (f1 == best_f1 and tau < best_tau):
+            best_f1 = f1
+            best_tau = float(tau)
+    return best_tau
+
+
 """REPORTING"""
 
 def format_report(result: Dict[str, object], title: str = "") -> str:

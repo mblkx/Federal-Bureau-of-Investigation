@@ -12,6 +12,7 @@ import pytest
 
 from src.server import (
     build_fedavg_strategy,
+    fit_config,
     initial_parameters_from_config,
     log_weighted_evaluate_metrics,
     main,
@@ -90,6 +91,8 @@ def test_build_fedavg_strategy_uses_metrics_aggregation(tmp_path: Path) -> None:
 
     strategy = build_fedavg_strategy(path)
     assert strategy.evaluate_metrics_aggregation_fn is log_weighted_evaluate_metrics
+    assert strategy.on_fit_config_fn is fit_config
+    assert fit_config(3) == {"server_round": 3}
 
 
 def test_main_calls_start_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

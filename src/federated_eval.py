@@ -59,29 +59,45 @@ def evaluate_global_parameters(
     cfg: dict[str, Any],
     parameters: Sequence[np.ndarray],
     *,
-    threshold: float = 0.5,
+    threshold: float | None = None,
 ) -> dict[str, object]:
     """Ocenia model globalny na oficjalnym zbiorze ``KDDTest+``.
 
     Kroki:
     1. Wczytaj przetworzone macierze testowe i kategorie ataków z ``processed_dir``.
-    2. Załaduj wagi do ``LocalModel`` i policz P(atak) dla każdego wiersza testu.
-    3. Wywołaj ``evaluate()`` (próg, F1, macierz pomyłek, metryki per kategoria).
-    4. Dołącz metadane runu (model, split, partycja shardów, liczba rund) oraz
-       ``meets_project_criterion`` względem ``evaluation.f1_threshold`` z configu.
+    2. Załaduj wagi do ``LocalModel`` i policz wynik ataku (P(atak) lub MSE).
+    3. Dla autoencodera: jeśli nie podano ``threshold``, dobierz ``τ`` na holdoucie
+       treningu (nie na ``KDDTest+``), zgodnie z protokołem ewaluacji.
+    4. Wywołaj ``evaluate()`` i dołącz ``meets_project_criterion``.
     """
+    from src.evaluate import stratified_holdout
+    from src.training import VAL_FRACTION
+
     data_cfg = cfg["data"]
     processed = load_prepared_arrays(data_cfg["processed_dir"])
     local = LocalModel.from_config(cfg)
     local.set_parameters(parameters)
-    scores = local.predict_attack_proba(processed["X_test"])
+
+    if local.is_autoencoder and threshold is None:
+        # Próg wyłącznie na walidacji z train — bez podglądania KDDTest+.
+        cat_train = processed["cat_train"]
+        _tr, va = stratified_holdout(cat_train, VAL_FRACTION, int(cfg["random_seed"]))
+        local.fit_threshold(processed["X_train"][va], processed["y_train"][va])
+        tau = float(local.threshold)
+    elif threshold is None:
+        tau = 0.5
+    else:
+        tau = float(threshold)
+
+    scores = local.predict_attack_score(processed["X_test"])
     categories = processed.get("cat_test")
     result: dict[str, object] = {
         "model": "fedavg_global",
+        "architecture": local.architecture,
         "split": "KDDTest+",
         "shard_partition": data_cfg.get("shard_partition"),
         "num_rounds": int(cfg["federated"]["num_rounds"]),
-        **evaluate(processed["y_test"], scores, categories, threshold=threshold),
+        **evaluate(processed["y_test"], scores, categories, threshold=tau),
     }
     eval_cfg = cfg.get("evaluation") or {}
     f1_threshold = float(eval_cfg.get("f1_threshold", 0.89))
@@ -108,7 +124,9 @@ def run_inprocess_fedavg(config_path: str | Path) -> list[np.ndarray]:
     partition = data_cfg["shard_partition"]
 
     global_model = LocalModel.from_config(cfg)
-    for _round in range(num_rounds):
+    for round_idx in range(num_rounds):
+        # Jak w Flower: server_round jest 1-based w on_fit_config_fn.
+        server_round = round_idx + 1
         global_params = global_model.get_parameters()
         state_dicts: list[OrderedDict[str, torch.Tensor]] = []
         sample_counts: list[int] = []
@@ -117,7 +135,11 @@ def run_inprocess_fedavg(config_path: str | Path) -> list[np.ndarray]:
             shard = load_shard(shard_path(data_cfg["shards_dir"], partition, client_id))
             client = LocalModel.from_config(cfg)
             client.set_parameters(global_params)
-            num_examples = client.train_on(shard["X"], shard["y"])
+            num_examples = client.train_on(
+                shard["X"],
+                shard["y"],
+                server_round=server_round,
+            )
             state_dicts.append(OrderedDict(client.model.state_dict()))
             sample_counts.append(num_examples)
 
@@ -133,13 +155,14 @@ def write_federated_results(
     metrics_path: str | Path,
     *,
     weights_path: str | Path | None = None,
-    threshold: float = 0.5,
+    threshold: float | None = None,
 ) -> dict[str, object]:
     """Zapisuje opcjonalnie wagi i zawsze JSON z metrykami końcowymi.
 
     Kroki:
     1. Jeśli podano ``weights_path`` — zapisz parametry do NPZ.
     2. Policz słownik metryk przez ``evaluate_global_parameters``.
+       ``threshold=None`` → MLP 0,5 albo AE dobrany na holdoucie train.
     3. Zapisz JSON przez ``save_results`` i zwróć ten sam słownik.
     """
     if weights_path is not None:

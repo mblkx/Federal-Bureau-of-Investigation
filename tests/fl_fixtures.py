@@ -9,21 +9,30 @@ import yaml
 
 
 def write_processed(tmp_path: Path, dim: int = 6) -> Path:
-    """Tworzy minimalny ``nsl_kdd_processed.npz`` z syntetycznym testem.
+    """Tworzy minimalny ``nsl_kdd_processed.npz`` z syntetycznym train/test.
 
     Kroki:
-    1. Wygeneruj ``X_test``, binarne ``y_test`` i kategorie ``cat_test``.
+    1. Wygeneruj train i test (X, y, cat) — train potrzebny do progu AE (M2.3).
     2. Zapisz plik w ``tmp_path/processed/`` i zwróć ten katalog.
     """
     rng = np.random.default_rng(0)
-    n_test = 40
+    n_train, n_test = 80, 40
+    X_train = rng.standard_normal((n_train, dim), dtype=np.float32)
+    y_train = (X_train[:, 0] > 0).astype(np.int64)
+    cat_train = np.array(
+        ["normal" if y == 0 else ("DoS" if i % 2 == 0 else "Probe") for i, y in enumerate(y_train)],
+        dtype="U16",
+    )
     X_test = rng.standard_normal((n_test, dim), dtype=np.float32)
     y_test = (X_test[:, 0] > 0).astype(np.int64)
-    cat_test = np.array(["normal" if y == 0 else "DoS" for y in y_test])
+    cat_test = np.array(["normal" if y == 0 else "DoS" for y in y_test], dtype="U16")
     out = tmp_path / "processed"
     out.mkdir()
     np.savez_compressed(
         out / "nsl_kdd_processed.npz",
+        X_train=X_train,
+        y_train=y_train,
+        cat_train=cat_train,
         X_test=X_test,
         y_test=y_test,
         cat_test=cat_test,
@@ -35,7 +44,7 @@ def write_shards(tmp_path: Path, dim: int = 6, num_clients: int = 3) -> Path:
     """Tworzy ``num_clients`` plików shardów IID w ``shards/iid/``.
 
     Kroki:
-    1. Dla każdego ``client_id`` wygeneruj losowe ``X``, ``y`` i zapisz ``client_{id}.npz``.
+    1. Dla każdego ``client_id`` wygeneruj losowe ``X``, ``y``, ``cat`` i zapisz ``client_{id}.npz``.
     2. Zwróć katalog nadrzędny ``shards`` (ścieżka w configu ``data.shards_dir``).
     """
     rng = np.random.default_rng(1)
@@ -45,7 +54,12 @@ def write_shards(tmp_path: Path, dim: int = 6, num_clients: int = 3) -> Path:
         n = 60
         X = rng.standard_normal((n, dim), dtype=np.float32)
         y = (X[:, 0] > 0).astype(np.int64)
-        np.savez_compressed(shard_dir / f"client_{cid}.npz", X=X, y=y)
+        # Mieszanka kategorii, żeby stratified_holdout miał obie klasy w train/val.
+        cat = np.array(
+            ["normal" if label == 0 else ("DoS" if i % 2 == 0 else "Probe") for i, label in enumerate(y)],
+            dtype="U16",
+        )
+        np.savez_compressed(shard_dir / f"client_{cid}.npz", X=X, y=y, cat=cat)
     return tmp_path / "shards"
 
 

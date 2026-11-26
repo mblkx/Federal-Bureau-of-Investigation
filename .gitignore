@@ -13,6 +13,8 @@ venv/
 # ML artifacts (keep metrics via results/.gitkeep if needed)
 *.pt
 *.pth
+results/*
+!results/.gitkeep
 
 # IDE
 .idea/
